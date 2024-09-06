@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	desc "github.com/vdyakova/homework1/pkg/note_v1"
+	desc "github.com/vdyakova/grpc/pkg/note_v1"
 	"google.golang.org/grpc"
+
 	"google.golang.org/grpc/credentials/insecure"
-	"image/color"
 	"log"
 	"time"
 )
@@ -32,5 +32,5 @@ func main() {
 		log.Fatalf("failed to get note by id: %v", err)
 	}
 
-	log.Printf(color.RedString("Note info:\n"), color.GreenString("%+v", r.GetNote()))
+	log.Printf(("Note info:\n"), ("%+v"), r)
 }

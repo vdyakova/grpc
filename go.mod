@@ -1,4 +1,4 @@
-module github.com/vdyakova/homework1/hw1
+module github.com/vdyakova/grpc
 
 go 1.22.1
 

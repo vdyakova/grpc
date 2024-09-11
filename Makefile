@@ -19,4 +19,13 @@ generate-note-api:
 		   --go_out=pkg/note_v1 --go_opt=paths=source_relative \
  		  --go-grpc_out=pkg/note_v1 --go-grpc_opt=paths=source_relative \
  		  api/note_v1/note.proto
+build:
+	GOOS=linux GOARCH=amd64 go build -o service_linux cmd/auth.go
 
+copy-to-server:
+	scp service_linux root@31.41.154.33:
+
+docker-build-and-push:
+	docker buildx build --no-cache --platform linux/amd64 -t cr.selcloud.ru/promise/test-server:v0.0.1 .
+	docker login -u token -p CRgAAAAATm9NHHvPmdiRcFiX22NeS-h9ieBhPDH0  cr.selcloud.ru/promise
+	docker push cr.selcloud.ru/promise/test-server:v0.0.1

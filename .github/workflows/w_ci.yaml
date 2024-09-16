@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 env:
   REGISTRY: "cr.selcloud.ru/promise"
@@ -23,14 +23,13 @@ jobs:
         uses: docker/setup-buildx-action@v2
 
       - name: Login to Docker Registry
-        run: docker login -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }} $REGISTRY
-
+        run: echo ${{ secrets.REGISTRY_PASSWORD }} | docker login -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin $REGISTRY
 
       - name: Build and Push Docker Image
         run: |
-              TAG_NAME=$(echo $GITHUB_SHA | head -c7)
-              docker buildx create --use
-              docker buildx build --no-cache --push --tag $REGISTRY/$IMAGE_NAME:$TAG_NAME -f Dockerfile .
+          TAG_NAME=$(echo $GITHUB_SHA | head -c7)
+          docker buildx create --use
+          docker buildx build --no-cache --push --tag $REGISTRY/$IMAGE_NAME:$TAG_NAME -f Dockerfile .
 
   deploy-image:
     runs-on: ubuntu-latest
@@ -44,20 +43,18 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSHKEY }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
-          envs: IMAGE_NAME,REGISTRY,GITHUB_SHA,CONTAINER_NAME
           script: |
-            # Set up variables
+            # Устанавливаем переменные
             TAG_NAME=$(echo $GITHUB_SHA | head -c7)
-            
-            # Login into Selectel Registry
-            docker login -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }} $REGISTRY
-            
-            
-            # Stop running container
-            docker stop $CONTAINER_NAME
-            
-            # Remove old container
-            docker rm $CONTAINER_NAME
-            
-            # Run a new container from a new image
-            docker run -d -p 50051:50051 --name $CONTAINER_NAME -t $REGISTRY/$IMAGE_NAME:$TAG_NAME
+
+            # Вход в реестр Selectel
+            echo ${{ secrets.REGISTRY_PASSWORD }} | docker login -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin $REGISTRY
+
+            # Останавливаем работающий контейнер (игнорируем ошибку, если контейнер не запущен)
+            docker stop $CONTAINER_NAME || true
+
+            # Удаляем старый контейнер (игнорируем ошибку, если контейнер не найден)
+            docker rm $CONTAINER_NAME || true
+
+            # Запускаем новый контейнер с новым образом
+            docker run -d -p 50051:50051 --name $CONTAINER_NAME $REGISTRY/$IMAGE_NAME:$TAG_NAME

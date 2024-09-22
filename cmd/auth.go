@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"github.com/Masterminds/squirrel"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	desc "github.com/vdyakova/grpc/pkg/note_v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -13,69 +17,126 @@ import (
 	"time"
 )
 
+const (
+	dbDSN = "host=localhost port=54321 dbname=note user=note-user password=note-password sslmode=disable"
+)
 const grpcPort = 50051
 
 type NoteV1ServerImpl struct {
 	desc.UnimplementedNoteV1Server
-	notes map[int64]*desc.GetResponse // Хранение заметок в памяти
+	bd *pgxpool.Pool
 }
 
 func (s *NoteV1ServerImpl) Create(ctx context.Context, req *desc.CreateRequest) (*desc.CreateResponse, error) {
-	id := int64(len(s.notes) + 1)
-	note := &desc.GetResponse{
-		Id:        id,
-		Name:      req.Name,
-		Email:     req.Email,
-		Role:      req.Role,
-		CreatedAt: timestamppb.New(time.Now()),
-		UpdatedAt: timestamppb.New(time.Now()),
+	builderInsert := squirrel.Insert("note_2").PlaceholderFormat(squirrel.Dollar).
+		Columns("name", "email", "role", "created_at", "updated_at").
+		Values(req.Name, req.Email,
+			int32(req.Role), time.Now(), time.Now()).Suffix("RETURNING id")
+
+	query, args, err := builderInsert.ToSql()
+	if err != nil {
+		log.Fatal("Insert error", err)
+		return nil, err
 	}
-	s.notes[id] = note
+	var id int64
+	err = s.bd.QueryRow(ctx, query, args...).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("execution error: %w", err)
+	}
 	return &desc.CreateResponse{Id: id}, nil
 }
 func (s *NoteV1ServerImpl) Get(ctx context.Context, req *desc.GetRequest) (*desc.GetResponse, error) {
 	log.Printf("Server - Note id: %d", req.GetId())
-	note, exists := s.notes[req.GetId()]
-	if !exists {
-		return nil, grpc.Errorf(codes.NotFound, "note not found")
+
+	builderSelect := squirrel.Select("id", "name", "email", "role", "created_at", "updated_at").
+		From("note_2").Where(squirrel.Eq{"id": req.GetId()})
+	query, args, err := builderSelect.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("select error: %w", err)
 	}
+
+	var id int64
+	var name, email string
+	var role int32
+	var createdAt time.Time
+	var updatedAt sql.NullTime
+
+	err = s.bd.QueryRow(ctx, query, args...).Scan(&id, &name, &email, &role, &createdAt, &updatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, grpc.Errorf(codes.NotFound, "note not found")
+		}
+		return nil, fmt.Errorf("failed to retrieve note: %w", err)
+	}
+	noteRole := desc.Role(role)
+
 	return &desc.GetResponse{
-		Id:        note.Id,
-		Name:      note.Name,
-		Email:     note.Email,
-		Role:      note.Role,
-		CreatedAt: note.CreatedAt,
-		UpdatedAt: note.UpdatedAt,
+		Id:        id,
+		Name:      name,
+		Email:     email,
+		Role:      noteRole,
+		CreatedAt: timestamppb.New(createdAt),
+		UpdatedAt: timestamppb.New(updatedAt.Time),
 	}, nil
 }
 func (s *NoteV1ServerImpl) Delete(ctx context.Context, req *desc.DeleteRequest) (*emptypb.Empty, error) {
-	_, ex := s.notes[req.GetId()]
-	if !ex {
-		return nil, grpc.Errorf(codes.NotFound, "note not found")
+
+	builderDelete := squirrel.Delete("note_2").Where(squirrel.Eq{"id": req.GetId()})
+	query, args, err := builderDelete.ToSql()
+	if err != nil {
+		log.Fatal("Delete error", err)
 	}
-	delete(s.notes, req.GetId())
+	res, err := s.bd.Exec(ctx, query, args...)
+	if err != nil {
+		log.Fatal("Delete error", err)
+	}
+	log.Printf("updated %d rows", res.RowsAffected())
 	return &emptypb.Empty{}, nil
 }
 func (s *NoteV1ServerImpl) Update(ctx context.Context, req *desc.UpdateRequest) (*emptypb.Empty, error) {
-	note, ex := s.notes[req.GetId()]
-	if !ex {
-		log.Printf("Server - Note id: %d", req.GetId())
-	}
+	builderUpdate := squirrel.Update("note_2").PlaceholderFormat(squirrel.Dollar).
+		Set("updated_at", time.Now())
+
 	if req.Name != nil {
-		note.Name = req.Name.Value
+		builderUpdate = builderUpdate.Set("name", req.Name.Value)
 	}
+	if req.Email != nil {
+		builderUpdate = builderUpdate.Set("email", req.Email.Value)
+	}
+
+	builderUpdate = builderUpdate.Where(squirrel.Eq{"id": req.GetId()})
+
+	query, args, err := builderUpdate.ToSql()
+	if err != nil {
+		log.Fatal("Update error", err)
+		return nil, err
+	}
+
+	res, err := s.bd.Exec(ctx, query, args...)
+	if err != nil {
+		log.Fatal("Update error", err)
+		return nil, err
+	}
+
+	log.Printf("updated %d rows", res.RowsAffected())
 	return &emptypb.Empty{}, nil
 }
 func main() {
+	ctx := context.Background()
+	con, err := pgxpool.Connect(ctx, dbDSN)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer con.Close()
 
-	//lis, err := net.Listen("tcp", "127.0.0.1:50051")
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+	//lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+	lis, err := net.Listen("tcp", "127.0.0.1:50051")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	grpcServer := grpc.NewServer()
 	server := &NoteV1ServerImpl{
-		notes: make(map[int64]*desc.GetResponse),
+		bd: con,
 	}
 	desc.RegisterNoteV1Server(grpcServer, server)
 	log.Printf("Starting gRPC server on port 50051...")

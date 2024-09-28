@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	dbDSN = "host=localhost port=54321 dbname=note user=note-user password=note-password sslmode=disable"
+	dbDSN = "host=localhost port=54322 dbname=note user=note-user password=note-password sslmode=disable"
 )
 const grpcPort = 50051
 
@@ -28,23 +28,32 @@ type NoteV1ServerImpl struct {
 }
 
 func (s *NoteV1ServerImpl) Create(ctx context.Context, req *desc.CreateRequest) (*desc.CreateResponse, error) {
-	builderInsert := squirrel.Insert("note_2").PlaceholderFormat(squirrel.Dollar).
+	log.Printf("Create request received: %v", req)
+
+	// Создание SQL-запроса
+	builderInsert := squirrel.Insert("note").PlaceholderFormat(squirrel.Dollar).
 		Columns("name", "email", "role", "created_at", "updated_at").
-		Values(req.Name, req.Email,
-			int32(req.Role), time.Now(), time.Now()).Suffix("RETURNING id")
+		Values(req.Name, req.Email, int64(req.Role), time.Now(), time.Now())
 
 	query, args, err := builderInsert.ToSql()
 	if err != nil {
-		log.Fatal("Insert error", err)
+		log.Printf("Error building SQL query: %v", err)
 		return nil, err
 	}
+
+	log.Printf("Executing query: %s with args: %v", query, args)
+
 	var id int64
 	err = s.bd.QueryRow(ctx, query, args...).Scan(&id)
 	if err != nil {
+		log.Printf("Execution error: %v", err)
 		return nil, fmt.Errorf("execution error: %w", err)
 	}
+
+	log.Printf("Record created with ID: %d", id)
 	return &desc.CreateResponse{Id: id}, nil
 }
+
 func (s *NoteV1ServerImpl) Get(ctx context.Context, req *desc.GetRequest) (*desc.GetResponse, error) {
 	log.Printf("Server - Note id: %d", req.GetId())
 

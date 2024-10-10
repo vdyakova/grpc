@@ -6,14 +6,20 @@ import (
 )
 
 type Note struct {
-	ID        int64
-	Info      NoteInfo
-	CreatedAt time.Time
-	UpdatedAt sql.NullTime
+	ID        int64        `db:"id"`
+	Info      NoteInfo     `db:""`
+	CreatedAt time.Time    `db:"created_at"`
+	UpdatedAt sql.NullTime `db:"updated_at"`
 }
 
 type NoteInfo struct {
-	Name  string
-	Email string
-	Role  int
+	Name  string `db:"name"`
+	Email string `db:"email"`
+	Role  int    `db:"role"`
+}
+type LogModel struct {
+	UserId    int
+	Log       string
+	Action    string
+	Timestamp time.Time
 }

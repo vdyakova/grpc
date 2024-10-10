@@ -8,7 +8,7 @@ import (
 	modelRepo "github.com/vdyakova/grpc/internal/repository/note/model"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/vdyakova/grpc/internal/client/db"
 	"github.com/vdyakova/grpc/internal/model"
 	"github.com/vdyakova/grpc/internal/repository"
 	"log"
@@ -16,10 +16,10 @@ import (
 )
 
 type repo struct {
-	db *pgxpool.Pool
+	db db.Client
 }
 
-func NewRepository(db *pgxpool.Pool) repository.NoteRepository {
+func NewRepository(db db.Client) repository.NoteRepository {
 	return &repo{db: db}
 }
 
@@ -27,7 +27,7 @@ func (r *repo) Create(ctx context.Context, info *model.NoteInfo) (int64, error) 
 
 	builderInsert := squirrel.Insert("note").PlaceholderFormat(squirrel.Dollar).
 		Columns("name", "email", "role", "created_at", "updated_at").
-		Values(info.Name, info.Email, int64(info.Role), time.Now(), time.Now())
+		Values(info.Name, info.Email, int64(info.Role), time.Now(), time.Now()).Suffix("RETURNING id")
 
 	query, args, err := builderInsert.ToSql()
 	if err != nil {
@@ -36,16 +36,20 @@ func (r *repo) Create(ctx context.Context, info *model.NoteInfo) (int64, error) 
 	}
 
 	log.Printf("Executing query: %s with args: %v", query, args)
-
-	var id int64
-	err = r.db.QueryRow(ctx, query, args...).Scan(&id)
-	if err != nil {
-		log.Printf("Execution error: %v", err)
-		return 0, fmt.Errorf("execution error: %w", err)
+	q := db.Query{
+		Name:     "note_repository.Create",
+		QueryRaw: query,
 	}
 
-	log.Printf("Record created with ID: %d", id)
+	var id int64
+	err = r.db.DB().QueryRowContext(ctx, q, args...).Scan(&id)
+	if err != nil {
+		log.Printf("Error creating note: %v", err)
+		return 0, err
+	}
+
 	return id, nil
+
 }
 
 func (r *repo) Get(ctx context.Context, id int64) (*model.Note, error) {
@@ -61,11 +65,15 @@ func (r *repo) Get(ctx context.Context, id int64) (*model.Note, error) {
 	}
 
 	var note modelRepo.Note
-	err = r.db.QueryRow(ctx, query, args...).Scan(&note.ID, &note.Info.Name, &note.Info.Email, &note.Info.Role, &note.CreatedAt, &note.UpdatedAt)
+	q := db.Query{
+		Name:     "note_repository.Get",
+		QueryRaw: query,
+	}
+
+	err = r.db.DB().QueryRowContext(ctx, q, args...).Scan(&note.ID, &note.Info.Name, &note.Info.Email, &note.Info.Role, &note.CreatedAt, &note.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-
 	return converter.ToNoteFromRepo(&note), nil
 
 }
@@ -77,7 +85,11 @@ func (r *repo) Delete(ctx context.Context, id int64) (*emptypb.Empty, error) {
 	if err != nil {
 		log.Fatal("Delete error", err)
 	}
-	res, err := r.db.Exec(ctx, query, args...)
+	q := db.Query{
+		Name:     "note_repository.Delete",
+		QueryRaw: query,
+	}
+	res, err := r.db.DB().ExecContext(ctx, q, args)
 	if err != nil {
 		log.Fatal("Delete error", err)
 	}
@@ -103,8 +115,11 @@ func (r *repo) Update(ctx context.Context, info *model.Note) (*emptypb.Empty, er
 		log.Fatal("Update error", err)
 		return nil, err
 	}
-
-	res, err := r.db.Exec(ctx, query, args...)
+	q := db.Query{
+		Name:     "note_repository.Update",
+		QueryRaw: query,
+	}
+	res, err := r.db.DB().ExecContext(ctx, q, args...)
 	if err != nil {
 		log.Fatal("Update error", err)
 		return nil, err
